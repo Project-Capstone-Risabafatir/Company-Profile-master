@@ -1,5 +1,4 @@
 name: CI/CD for Company Profile App
-
 on:
   push:
     branches:
