@@ -1,4 +1,5 @@
 name: CI/CD for Company Profile App
+
 on:
   push:
     branches:
@@ -12,9 +13,10 @@ jobs:
       APP_NAME: company-profile-container
       OPENSHIFT_NAMESPACE: risabafatir-dev
       IMAGE_REGISTRY: quay.io
-      IMAGE_TAGS: latest                       
-      OPENSHIFT_SERVER: ${{ secrets.OPENSHIFT_SERVER }} 
-      OPENSHIFT_TOKEN: ${{ secrets.OPENSHIFT_TOKEN }} 
+      IMAGE_TAGS: latest
+      APP_PORT: 8080
+      OPENSHIFT_SERVER: ${{ secrets.OPENSHIFT_SERVER }}
+      OPENSHIFT_TOKEN: ${{ secrets.OPENSHIFT_TOKEN }}
 
     steps:
     - name: Checkout code
@@ -24,14 +26,8 @@ jobs:
       run: |
         curl -LO https://mirror.openshift.com/pub/openshift-v4/clients/oc/latest/linux/oc.tar.gz
         tar -xvf oc.tar.gz
-        sudo mv oc /usr/local/bin/
+        sudo mv oc /usr/local/bin/oc
         oc version  # Verify installation
-
-    - name: Build and Tag Image
-      run: |
-        IMAGE_NAME=company-profile-container
-        TAG=latest
-        podman build -t quay.io/${{ secrets.QUAY_USERNAME }}/$IMAGE_NAME:$TAG .
 
     - name: Log in to Quay.io
       env:
@@ -40,49 +36,43 @@ jobs:
       run: |
         echo "$QUAY_PASSWORD" | podman login quay.io -u "$QUAY_USERNAME" --password-stdin
 
-    - name: Push Image to Quay.io
+    - name: Build and Push Image to Quay.io
       run: |
-        IMAGE_NAME=company-profile-container
-        TAG=latest
-        podman push quay.io/${{ secrets.QUAY_USERNAME }}/$IMAGE_NAME:$TAG
+        IMAGE=quay.io/${{ secrets.QUAY_USERNAME }}/${{ env.APP_NAME }}:${{ env.IMAGE_TAGS }}
+        podman build -t $IMAGE .
+        podman push $IMAGE
 
     - name: Login to OpenShift
       run: |
-        oc login ${{ secrets.OPENSHIFT_SERVER }} \
-          --token=${{ secrets.OPENSHIFT_TOKEN }} \
-          --insecure-skip-tls-verify
+        oc login ${{ secrets.OPENSHIFT_SERVER }} --token=${{ secrets.OPENSHIFT_TOKEN }} --insecure-skip-tls-verify
 
-    - name: Create New Deployment or Update Container Image for Existing Deployment
+    - name: Deploy Application on OpenShift
       run: |
+        IMAGE=${{ env.IMAGE_REGISTRY }}/${{ secrets.QUAY_USERNAME }}/${{ env.APP_NAME }}:${{ env.IMAGE_TAGS }}
+
         if oc get deployment ${{ env.APP_NAME }} -n ${{ env.OPENSHIFT_NAMESPACE }} >/dev/null 2>&1; then
-          echo "Deployment ${{ env.APP_NAME }} exists."
-          echo "Updating container image for deployment ${{ env.APP_NAME }} ..."
-          oc set image deployment/${{ env.APP_NAME }} ${{ env.APP_NAME }}=${{ env.IMAGE_REGISTRY }}/${{ secrets.QUAY_USERNAME }}/${{ env.APP_NAME }}:${{ env.IMAGE_TAGS }} -n ${{ env.OPENSHIFT_NAMESPACE }}
-          echo "Image update complete."
+          echo "Updating existing deployment..."
+          oc set image deployment/${{ env.APP_NAME }} ${{ env.APP_NAME }}=$IMAGE -n ${{ env.OPENSHIFT_NAMESPACE }}
           oc rollout restart deployment/${{ env.APP_NAME }} -n ${{ env.OPENSHIFT_NAMESPACE }}
-          echo "Rolling update triggered."
         else
-          echo "Deployment ${{ env.APP_NAME }} does not exist"
           echo "Creating new deployment..."
-          oc create deployment ${{ env.APP_NAME }} --image=${{ env.IMAGE_REGISTRY }}/${{ secrets.QUAY_USERNAME }}/${{ env.APP_NAME }}:${{ env.IMAGE_TAGS }} -n ${{ env.OPENSHIFT_NAMESPACE }}
+          oc create deployment ${{ env.APP_NAME }} --image=$IMAGE -n ${{ env.OPENSHIFT_NAMESPACE }}
         fi
 
-    - name: Create Service to Expose defined port
+    - name: Ensure Service Exists
       run: |
-        if oc get service ${{ env.APP_NAME }} -n ${{ env.OPENSHIFT_NAMESPACE }} >/dev/null 2>&1; then
-          echo "Service ${{ env.APP_NAME }} exists. Skipping..."
+        if ! oc get service ${{ env.APP_NAME }} -n ${{ env.OPENSHIFT_NAMESPACE }} >/dev/null 2>&1; then
+          echo "Creating new service..."
+          oc expose deployment ${{ env.APP_NAME }} --port=${{ env.APP_PORT }} -n ${{ env.OPENSHIFT_NAMESPACE }}
         else
-          echo "Service ${{ env.APP_NAME }} does not exist."
-          echo "Creating new Service..."
-          oc expose deployment ${{ env.APP_NAME }} --port=8080 -n ${{ env.OPENSHIFT_NAMESPACE }}
+          echo "Service already exists."
         fi
 
-    - name: Create Route for Public Access
+    - name: Ensure Route Exists
       run: |
-        if oc get route ${{ env.APP_NAME }} -n ${{ env.OPENSHIFT_NAMESPACE }} >/dev/null 2>&1; then
-          echo "Route ${{ env.APP_NAME }} exists. Skipping..."
-        else
-          echo "Route ${{ env.APP_NAME }} does not exist."
-          echo "Creating new Route..."
+        if ! oc get route ${{ env.APP_NAME }} -n ${{ env.OPENSHIFT_NAMESPACE }} >/dev/null 2>&1; then
+          echo "Creating new route..."
           oc create route edge --service=${{ env.APP_NAME }} --insecure-policy=Redirect -n ${{ env.OPENSHIFT_NAMESPACE }}
+        else
+          echo "Route already exists."
         fi
