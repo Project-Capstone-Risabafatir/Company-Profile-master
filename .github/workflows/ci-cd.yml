@@ -25,7 +25,8 @@ jobs:
       run: |
         curl -LO https://mirror.openshift.com/pub/openshift-v4/clients/oc/latest/linux/oc.tar.gz
         tar -xvf oc.tar.gz
-        sudo mv oc /usr/local/bin/
+        sudo mv oc /usr/bin/
+        chmod a+x /usr/bin/oc
         oc version  # Verify installation
 
     - name: Build and Push Image to Quay.io
