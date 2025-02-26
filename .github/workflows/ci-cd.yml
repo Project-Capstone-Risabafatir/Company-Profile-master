@@ -1,4 +1,4 @@
-name: CI/CD for Company Profile App
+name: CI/CD for Company Profile App 
 
 on:
   push:
