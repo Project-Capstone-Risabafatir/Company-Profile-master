@@ -1,4 +1,4 @@
-name: CI/CD for Company Profile App 
+name: CI/CD for Company Profile App
 
 on:
   push:
@@ -12,7 +12,6 @@ jobs:
       APP_NAME: company-profile-container
       OPENSHIFT_NAMESPACE: risabafatir-dev
       IMAGE_REGISTRY: quay.io
-      IMAGE_TAGS: latest
       APP_PORT: 8080
       OPENSHIFT_SERVER: ${{ secrets.OPENSHIFT_SERVER }}
       OPENSHIFT_TOKEN: ${{ secrets.OPENSHIFT_TOKEN }}
@@ -20,6 +19,9 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
+
+    - name: Set image tag version using run number
+      run: echo "IMAGE_TAG=${{ github.run_number }}" >> $GITHUB_ENV
 
     - name: Install OpenShift CLI
       run: |
@@ -34,7 +36,7 @@ jobs:
         QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
         QUAY_PASSWORD: ${{ secrets.QUAY_PASSWORD }}
       run: |
-        IMAGE=quay.io/${{ secrets.QUAY_USERNAME }}/${{ env.APP_NAME }}:${{ env.IMAGE_TAGS }}
+        IMAGE=quay.io/${{ secrets.QUAY_USERNAME }}/${{ env.APP_NAME }}:${IMAGE_TAG}
         echo "$QUAY_PASSWORD" | podman login quay.io -u "$QUAY_USERNAME" --password-stdin
         podman build -t $IMAGE .
         podman push $IMAGE
@@ -47,36 +49,30 @@ jobs:
 
     - name: Deploy Application on OpenShift
       run: |
-        IMAGE=${{ env.IMAGE_REGISTRY }}/${{ secrets.QUAY_USERNAME }}/${{ env.APP_NAME }}:${{ env.IMAGE_TAGS }}
-        if oc get deployment ${{ env.APP_NAME }} -n ${{ env.OPENSHIFT_NAMESPACE }} >/dev/null 2>&1; then
+        IMAGE=${IMAGE_REGISTRY}/${{ secrets.QUAY_USERNAME }}/${APP_NAME}:${IMAGE_TAG}
+        if oc get deployment ${APP_NAME} -n ${OPENSHIFT_NAMESPACE} >/dev/null 2>&1; then
           echo "Updating existing deployment..."
-          oc set image deployment/${{ env.APP_NAME }} ${{ env.APP_NAME }}=$IMAGE -n ${{ env.OPENSHIFT_NAMESPACE }}
-          # Patch the deployment to always pull the image
-          oc patch deployment ${{ env.APP_NAME }} -n ${{ env.OPENSHIFT_NAMESPACE }} --type='json' \
-            -p='[{"op": "replace", "path": "/spec/template/spec/containers/0/imagePullPolicy", "value": "Always"}]'
-          oc rollout restart deployment/${{ env.APP_NAME }} -n ${{ env.OPENSHIFT_NAMESPACE }}
+          oc set image deployment/${APP_NAME} ${APP_NAME}=$IMAGE -n ${OPENSHIFT_NAMESPACE}
+          oc rollout restart deployment/${APP_NAME} -n ${OPENSHIFT_NAMESPACE}
         else
           echo "Creating new deployment..."
-          oc create deployment ${{ env.APP_NAME }} --image=$IMAGE -n ${{ env.OPENSHIFT_NAMESPACE }}
-          # Ensure new deployment pulls the image on startup
-          oc patch deployment ${{ env.APP_NAME }} -n ${{ env.OPENSHIFT_NAMESPACE }} --type='json' \
-            -p='[{"op": "replace", "path": "/spec/template/spec/containers/0/imagePullPolicy", "value": "Always"}]'
+          oc create deployment ${APP_NAME} --image=$IMAGE -n ${OPENSHIFT_NAMESPACE}
         fi
 
     - name: Ensure Service Exists
       run: |
-        if ! oc get service ${{ env.APP_NAME }} -n ${{ env.OPENSHIFT_NAMESPACE }} >/dev/null 2>&1; then
+        if ! oc get service ${APP_NAME} -n ${OPENSHIFT_NAMESPACE} >/dev/null 2>&1; then
           echo "Creating new service..."
-          oc expose deployment ${{ env.APP_NAME }} --port=${{ env.APP_PORT }} -n ${{ env.OPENSHIFT_NAMESPACE }}
+          oc expose deployment ${APP_NAME} --port=${APP_PORT} -n ${OPENSHIFT_NAMESPACE}
         else
           echo "Service already exists."
         fi
 
     - name: Ensure Route Exists
       run: |
-        if ! oc get route ${{ env.APP_NAME }} -n ${{ env.OPENSHIFT_NAMESPACE }} >/dev/null 2>&1; then
+        if ! oc get route ${APP_NAME} -n ${OPENSHIFT_NAMESPACE} >/dev/null 2>&1; then
           echo "Creating new route..."
-          oc create route edge --service=${{ env.APP_NAME }} --insecure-policy=Redirect -n ${{ env.OPENSHIFT_NAMESPACE }}
+          oc create route edge --service=${APP_NAME} --insecure-policy=Redirect -n ${OPENSHIFT_NAMESPACE}
         else
           echo "Route already exists."
         fi
